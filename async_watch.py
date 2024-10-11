@@ -4,40 +4,88 @@ import subprocess
 
 import aetcd
 
+# Configure logging
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(funcName)s - %(message)s",
 )
-
 logger = logging.getLogger(__name__)
 
 
+# Custom exception to cancel tasks
+class ErrorCancelTasks(Exception):
+    pass
+
+
 async def watch_callback(event):
-    # Check the kind of event and process accordingly
-    if event.kind == aetcd.rtypes.EventKind.PUT:
-        if event.kv.key == b"rec-service":
-            if event.kv.value == b"start":
-                print("Starting process...")
-                # subprocess.Popen(['your_process_command'])  # Запускает процесс
-                response = subprocess.getoutput("ip a")
+    """Callback to handle etcd watch events."""
+    if event.kind == aetcd.rtypes.EventKind.PUT and event.kv.key == b"rec-service":
+        if event.kv.value == b"start":
+            logger.info("Starting process...")
+            try:
+                response = subprocess.getoutput(
+                    "ip a"
+                )  # You can replace this with your actual command
                 logger.info(response)
-            elif event.kv.value == b"stop":
-                print("Stop process...")
-                # Here, you could add logic to stop your process if needed
+            except subprocess.SubprocessError as e:
+                logger.error(f"Failed to start process: {e}")
+        elif event.kv.value == b"stop":
+            logger.info("Stopping process...")
+            # Add stop process logic here if necessary
+
+
+async def watch_event():
+    """Watches etcd for key 'rec-service'."""
+    client = aetcd.Client()
+
+    logger.info('Watching for "rec-service"...')
+
+    try:
+        watch = await client.watch(b"rec-service")
+        async for event in watch:
+            await watch_callback(event)
+    except Exception as e:
+        logger.error(f"Watch event error: {e}")
+    finally:
+        await client.close()
+
+
+async def work_task():
+    """Dummy work task for demonstration."""
+    iteration = 0
+    while True:
+        iteration += 1
+        logger.info(f"Work iteration {iteration}")
+        await asyncio.sleep(1.5)
 
 
 async def main():
-    client = aetcd.Client()
+    """Main entry point of the application."""
+    tasks = [
+        asyncio.create_task(watch_event()),
+        asyncio.create_task(work_task()),
+    ]
 
-    # Start watching the 'rec-service' key
-    watch = await client.watch(b"rec-service")  # Await the watch coroutine
-
-    print('Watching for "rec-service"...')
-    async for event in watch:
-        await watch_callback(event)  # Call the callback for each event
+    try:
+        await asyncio.gather(*tasks)
+    except asyncio.TimeoutError:
+        logger.warning("Timeout occurred!")
+    except ErrorCancelTasks:
+        logger.error("Fatal error; cancelling tasks")
+        for task in tasks:
+            task.cancel()
+    except Exception as e:
+        logger.error(f"Unhandled exception: {e}")
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info("Tasks cancelled")
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Stopping watch...")
+        logger.info("Stopping watch...")
