@@ -1,15 +1,9 @@
 import asyncio
-import logging
 import subprocess
 
 import aetcd
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(funcName)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+from log import logger
 
 
 # Custom exception to cancel tasks
@@ -60,7 +54,6 @@ async def work_task():
 
 
 async def main():
-    """Main entry point of the application."""
     tasks = [
         asyncio.create_task(watch_event()),
         asyncio.create_task(work_task()),
